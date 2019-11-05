@@ -4,8 +4,6 @@ import numpy as np
 import open3d as o3d
 import copy
 import keyboard
-from pynput.keyboard import Key
-import scipy as sci
 import modern_robotics as mr
 # import pcl
 
@@ -14,7 +12,7 @@ import modern_robotics as mr
 
 
 def get_cloud(image, intrinsics):
-    pc = o3d.create_point_cloud_from_rgbd_image(image, intrinsics)
+    pc = o3d.geometry.PointCloud.create_from_rgbd_image(image, intrinsics)
     pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     return pc
 
@@ -22,7 +20,7 @@ def get_cloud(image, intrinsics):
 # Setup cloud for registration
 def setup_cloud(pointcloud):
     #qo3d.estimate_normals(pointcloud, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    pc_fph = o3d.compute_fpfh_feature(pointcloud, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
+    pc_fph = o3d.registration.Feature.compute_fpfh_feature(pointcloud, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
     return pointcloud, pc_fph
 
 class VectorArrayInterface(object):
@@ -38,7 +36,7 @@ class VectorArrayInterface(object):
 
 def capture_ply(pc, count):
     print("Capturing Point Cloud")
-    o3d.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
+    o3d.geometry.PointCloud.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
                           compressed=False)
     return
 
@@ -54,9 +52,9 @@ def get_intrinsic_matrix(frame):
 
 # Remove bad points
 def preprocess_point_cloud(pointcloud):
-    pc_down = o3d.voxel_down_sample(pointcloud, voxel_size=0.01)
-    o3d.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=50))
-    o3d.orient_normals_towards_camera_location(pc_down)
+    pc_down = o3d.geometry.PointCloud.voxel_down_sample(pointcloud, voxel_size=0.01)
+    o3d.geometry.PointCloud.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=50))
+    o3d.geometry.PointCloud.orient_normals_towards_camera_location(pc_down)
     return pc_down
 
 
@@ -64,17 +62,17 @@ def pairwise_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
 
-    result = o3d.registration_fast_based_on_feature_matching(copy.deepcopy(source_temp), copy.deepcopy(target_temp), source_f, target_f,
-                                                             o3d.FastGlobalRegistrationOption(maximum_correspondence_distance=0.01))
+    result = o3d.registration.registration_fast_based_on_feature_matching(copy.deepcopy(source_temp), copy.deepcopy(target_temp), source_f, target_f,
+                                                             o3d.registration.FastGlobalRegistrationOption(maximum_correspondence_distance=0.01))
     print("Apply point-to-plane ICP")
     icp_coarse = o3d.registration.registration_icp(
         copy.deepcopy(source_temp), copy.deepcopy(target_temp), voxel_radius * 1.5, result.transformation,
-        o3d.TransformationEstimationPointToPlane(), o3d.ICPConvergenceCriteria(max_iteration=200))
+        o3d.registration.TransformationEstimationPointToPlane(), o3d.registration.ICPConvergenceCriteria(max_iteration=200))
 
     icp_fine = o3d.registration.registration_icp(
         copy.deepcopy(source_temp), copy.deepcopy(target_temp), voxel_radius * 1,
         icp_coarse.transformation,
-        o3d.registration.TransformationEstimationPointToPlane(), o3d.ICPConvergenceCriteria(max_iteration=500))
+        o3d.registration.TransformationEstimationPointToPlane(), o3d.registration.ICPConvergenceCriteria(max_iteration=500))
 
     transformation_icp = icp_fine.transformation
     information_icp = o3d.registration.get_information_matrix_from_point_clouds(
@@ -96,8 +94,8 @@ def global_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
 
-    result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
-                                                             o3d.FastGlobalRegistrationOption())
+    result = o3d.registration.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
+                                                             o3d.registration.FastGlobalRegistrationOption())
 
     #result = o3d.registration_icp(source_temp, target_temp, voxel_radius*1.5, np.identity(4),
                                   #o3d.TransformationEstimationPointToPlane())
@@ -120,12 +118,12 @@ def add_pose_node(transformation, information, world_transformation, tid, pose_g
     for y in range(tid):
         if tid == y + 1:
             world_transformation = np.dot(transformation, world_transformation)
-            node = o3d.PoseGraphNode(np.linalg.inv(world_transformation))
-            oedge = o3d.PoseGraphEdge(y, tid, transformation, information, uncertain=False)
+            node = o3d.registration.PoseGraphNode(np.linalg.inv(world_transformation))
+            oedge = o3d.registration.PoseGraphEdge(y, tid, transformation, information, uncertain=False)
             pose_graph.nodes.append(node)
             pose_graph.edges.append(oedge)
         else:
-            pose_graph.edges.append(o3d.PoseGraphEdge(y, tid, world_transformation, information, uncertain=True))
+            pose_graph.edges.append(o3d.registration.PoseGraphEdge(y, tid, world_transformation, information, uncertain=True))
             #qpose_graph.edges.append(o3d.PoseGraphEdge(y, tid, transformation, information, uncertain=True))
 
     return pose_graph, world_transformation
@@ -151,14 +149,14 @@ def full_registration(source, target, source_id, target_id, base_id, base,  max_
     odometry = np.dot(transformation_icp, odometry)
     odometry_global = np.dot(transformation_global, odometry_global)
 
-    pose_graph.nodes.append(o3d.PoseGraphNode(np.linalg.inv(odometry)))
+    pose_graph.nodes.append(o3d.registration.PoseGraphNode(np.linalg.inv(odometry)))
 
     if success:
         # Odometry Case for local registration
         pose_graph.edges.append(
-            o3d.PoseGraphEdge(source_id, target_id, transformation_icp, information_icp, uncertain=False))
+            o3d.registration.PoseGraphEdge(source_id, target_id, transformation_icp, information_icp, uncertain=False))
         pose_graph.edges.append(
-            o3d.PoseGraphEdge(base_id, target_id, transformation_icp, information_icp, uncertain=True))
+            o3d.registration.PoseGraphEdge(base_id, target_id, transformation_icp, information_icp, uncertain=True))
 
     # Loop Closure Case for global registration
     # pose_graph.nodes.append(o3d.PoseGraphNode(np.linalg.inv(odometry_global)))
@@ -234,15 +232,13 @@ def optimize_Pose(pose_graph, max_correspondence_distance_fine):
 def odometry(source, target, intrinsic):
 
     #Initialize odometry parameters
-    option = o3d.OdometryOption()
+    option = o3d.odometry.OdometryOption()
     odo_init = np.identity(4)
 
     #Compute odometry
-    [success, trans, info] = o3d.compute_rgbd_odometry(source, target, intrinsic, odo_init, o3d.RGBDOdometryJacobianFromColorTerm(), option)
+    [success, trans, info] = o3d.odometry.compute_rgbd_odometry(source, target, intrinsic, odo_init, o3d.odometry.RGBDOdometryJacobianFromColorTerm(), option)
 
     return trans, info
-
-
 
 
 # Create a pipeline
@@ -276,7 +272,6 @@ depth_sensor = profile.get_device().first_depth_sensor()
 laserpwr = depth_sensor.get_option(rs.option.laser_power)
 depth_sensor.set_option(rs.option.emitter_enabled, 1)
 depth_sensor.set_option(rs.option.laser_power, laserpwr)
-depth_sensor.set_option(rs.option.gain, 16)
 depth_sensor.set_option(rs.option.depth_units, 0.0001)
 depth_sensor.set_option(rs.option.visual_preset, 3)
 depth_scale = depth_sensor.get_depth_scale()
@@ -296,40 +291,41 @@ target = o3d.PointCloud()
 '''
 
 #Initialize RGBD Image
-source = o3d.RGBDImage()
-target = o3d.RGBDImage()
+source = o3d.geometry.RGBDImage()
+target = o3d.geometry.RGBDImage()
+rgbd_image = o3d.geometry.RGBDImage()
 
 #Initialize PointCloud
-source_pcd = o3d.PointCloud()
-target_pcd = o3d.PointCloud()
+source_pcd = o3d.geometry.PointCloud()
+target_pcd = o3d.geometry.PointCloud()
 
 sid = 0
 tid = 0
 s = 0
 t = 0
 
-feature_source = o3d.Feature()
-feature_target = o3d.Feature()
+feature_source = o3d.registration.Feature()
+feature_target = o3d.registration.Feature()
 
-base = o3d.PointCloud()
-combined = o3d.PointCloud()
+base = o3d.geometry.PointCloud()
+combined = o3d.geometry.PointCloud()
 
-pose_graph = o3d.PoseGraph()
+pose_graph = o3d.registration.PoseGraph()
 last_trans = np.identity(4)
-pose_graph.nodes.append(o3d.PoseGraphNode(last_trans))
+pose_graph.nodes.append(o3d.registration.PoseGraphNode(last_trans))
 check_trans = False
 
 pcd_list = []
 
 
-'''
+
 # Initialize visualizer Class Config
-vis = o3d.VisualizerWithKeyCallback()
+vis = o3d.visualization.VisualizerWithKeyCallback()
 vis.create_window('AFO', width=1280, height=720)
 opt = vis.get_render_option()
 opt.background_color = np.array([0, 0, 0])
 # Streaming loop
-'''
+
 
 try:
 
@@ -353,12 +349,12 @@ try:
             continue
 
         # Create Images
-        depth_image = o3d.Image(np.array(aligned_depth_frame.get_data()))
+        depth_image = o3d.geometry.Image(np.array(aligned_depth_frame.get_data()))
         color_temp = np.asarray(color_frame.get_data())
-        color_image = o3d.Image(color_temp)
+        color_image = o3d.geometry.Image(color_temp)
 
         # Create RGBD Image
-        rgbd_image = o3d.create_rgbd_image_from_color_and_depth(color_image, depth_image, depth_scale=1.0 / depth_scale,
+        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(color_image, depth_image, depth_scale=1.0 / depth_scale,
                                                                 depth_trunc=clipping_distance_in_meters,
                                                                 convert_rgb_to_intensity=False)
 
@@ -367,15 +363,23 @@ try:
             current_trans, info = odometry(source, target, intrinsic)
             last_trans = np.dot(current_trans, last_trans)
             last_trans_inv = np.linalg.inv(last_trans)
-            pose_graph.nodes.append(o3d.PoseGraphNode(last_trans_inv))
-            pose_graph.edges.append(o3d.PoseGraphEdge(sid, tid, current_trans, info, False))
+            pose_graph.nodes.append(o3d.registration.PoseGraphNode(last_trans_inv))
+            pose_graph.edges.append(o3d.registration.PoseGraphEdge(sid, tid, current_trans, info, False))
             target_pcd = get_cloud(target, intrinsic)
             source_pcd.transform(current_trans)
 
-            source = copy.deepcopy(target)
+            base += target_pcd
+            base.voxel_down_sample(voxel_size=0.004)
+
+            source = target
             sid += 1
             tid += 1
-            #o3d.draw_geometries([source_pcd, target_pcd])
+            #o3d.visualization.draw_geometries([source_pcd, target_pcd])
+            vis.add_geometry(base)
+            vis.update_geometry()
+            vis.poll_events()
+            vis.update_renderer()
+            vis.remove_geometry(base)
 
             '''
             target = preprocess_point_cloud(get_cloud(rgbd_image, intrinsic))
@@ -404,11 +408,11 @@ try:
             '''
             source = rgbd_image
             source_pcd = get_cloud(source, intrinsic)
+            base = copy.deepcopy(source_pcd)
             save_image = True
 
         process_time = datetime.now() - dt0
         print("FPS: " + str(1 / process_time.total_seconds()))
-
 
         '''
         if keyboard.is_pressed('q'):
@@ -416,9 +420,9 @@ try:
             for node in range(len(pcd_list)):
                 pcd_list[node].transform(pose_graph.nodes[node].pose)
                 base += pcd_list[node]
-            base = o3d.voxel_down_sample(base, voxel_size=0.005)
+            base = o3d.geometry.PointCloud.voxel_down_sample(base, voxel_size=0.005)
             # Initialize visualizer Class Configq
-            vis = o3d.VisualizerWithKeyCallback()
+            vis = o3d.visualization.VisualizerWithKeyCallback()
             vis.create_window('AFO', width=1280, height=720)
             opt = vis.get_render_option()
 
@@ -428,6 +432,7 @@ try:
             capture_ply(base, 1)
             break
         '''
+
 
 finally:
     pipeline.stop()
