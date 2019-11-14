@@ -21,6 +21,12 @@ import pyrealsense2 as rs
 
 import numpy as np
 
+# OpenCV Library to compute baseline matching
+import cv2
+
+# Import Open3D opencv_pose_estimation python file to compute baseline matching for non-adjacent RGBD Images
+from src import opencv_pose_estimation
+
 # Open3D Library - Modern 3D Processing Library
 import open3d as o3d
 
@@ -112,9 +118,23 @@ def register_adjacent_RGBDs(s,t, color_files, depth_files, intrinsics):
     return success, transformation, info
 
 
-# TODO: Register non-adjacent RGBD's
-def register_non_adjacent_RGBDs():
-    return True
+def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
+
+    source_rgbd = create_one_RGBD(color_files[s], depth_files[s])
+    target_rgbd = create_one_RGBD(color_files[t], depth_files[t])
+
+    option = o3d.odometry.OdometryOption()
+
+    # Compute wide baseline matching for non-adjacent images (align them by matching sparse features)
+    success_matching, odometry_init = opencv_pose_estimation.pose_estimation(source_rgbd, target_rgbd, intrinsics, False)
+
+    if success_matching:
+
+        [success, transformation, info] = o3d.odometry.compute_rgbd_odometry(source_rgbd, target_rgbd, intrinsics,
+                                                                             odometry_init,
+                                                                             o3d.odometry.RGBDOdometryJacobianFromHybridTerm(),
+                                                                             option)
+    return success, transformation, info
 
 
 # TODO: create RGBD fragments from all frames obtained from files
