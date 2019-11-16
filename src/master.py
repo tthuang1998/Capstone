@@ -257,3 +257,11 @@ try:
 
 finally:
     pipeline.stop()
+
+filepath = "C:/Users/rjsre/PycharmProjects/Trial3/src/newdata/"
+[color_files, depth_files] = get_rgbd_file_lists(filepath)
+
+pose_graph = create_RGBD_posegraph(50, color_files=color_files, depth_files=depth_files, intrinsics=intrinsic)
+pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.05, True, 0.25, 0)
+mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4)
+o3d.visualization.draw_geometries([mesh])
