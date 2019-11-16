@@ -137,10 +137,39 @@ def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
     return success, transformation, info
 
 
-# TODO: create RGBD fragments from all frames obtained from files
-def create_RGBD_fragments (s, t, color_files, depth_files, intrinsics):
+def create_RGBD_fragments (s, t, fragment_size, color_files, depth_files, intrinsics):
+    pose_graph = o3d.registration.PoseGraph()
+    transformation = np.identity(4)
+    pose_graph.nodes.append(o3d.registration.PoseGraphNode(transformation))
+    for s in range(len(color_files)):
+        for t in range(s+1, len(color_files)):
+            if t == s + 1:
+                [success, trans, info] = register_adjacent_RGBDs(s, t, color_files, depth_files,intrinsics)
+                transformation = np.dot(trans, transformation)
+                trans_inv = np.linalg.inv(transformation)
+                pose_graph.nodes.append(o3d.registration.PoseGraphNode(trans_inv))
+                pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, trans, info, uncertain=False))
+            elif (s % fragment_size == 0) and (t % fragment_size == 0):
+                [success, trans, info] = register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics)
+                if success:
+                    pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, trans, info, uncertain=True))
+    return pose_graph
+
+# TODO: optimize created pose_graph for tighter alignment
+def optimize_pose_for_frag():
     return True
 
+# TODO: Helper function to run optimization of RGBD fragment
+def pose_optimization():
+    return True
+
+# TODO: Integrate RGBD images into a mesh that can be projected onto 3D surface
+def integrate_RGBD():
+    return True
+
+# TODO: Convert RGBD fragment into pointcloud fragment for registration
+def RGBD_to_pointcloud():
+    return True
 
 '''
 Variables Used:
