@@ -96,13 +96,14 @@ def get_intrinsic_matrix(frame):
     return out
 
 
+# creates RGBD image from color image and depth image
 def create_one_RGBD(color_file, depth_file):
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(color_file, depth_file, depth_scale=1.0/depth_scale,
                                                                     depth_trunc=clipping_distance_in_meters,
                                                                     convert_rgb_to_intensity=False)
     return rgbd_image
 
-
+# register locally RGBD Images using RGBD Odometry
 def register_adjacent_RGBDs(s,t, color_files, depth_files, intrinsics):
 
     source_rgbd = create_one_RGBD(color_files[s], depth_files[s])
@@ -117,7 +118,7 @@ def register_adjacent_RGBDs(s,t, color_files, depth_files, intrinsics):
 
     return success, transformation, info
 
-
+# register globally using OpenCV ORB feature to find sparse overlap
 def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
 
     source_rgbd = create_one_RGBD(color_files[s], depth_files[s])
@@ -134,9 +135,18 @@ def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
                                                                              odometry_init,
                                                                              o3d.odometry.RGBDOdometryJacobianFromHybridTerm(),
                                                                              option)
+    else:
+        odometry_init = np.identity(4)
+        [success, transformation, info] = o3d.odometry.compute_rgbd_odometry(source_rgbd, target_rgbd, intrinsics,
+                                                                             odometry_init,
+                                                                             o3d.odometry.RGBDOdometryJacobianFromHybridTerm(),
+                                                                             option)
+
     return success, transformation, info
 
-
+'''
+Create pose graph for all created RGBD images and then register globally every frame
+'''
 def create_RGBD_posegraph(fragment_size, color_files, depth_files, intrinsics):
     pose_graph = o3d.registration.PoseGraph()
     transformation = np.identity(4)
@@ -156,6 +166,7 @@ def create_RGBD_posegraph(fragment_size, color_files, depth_files, intrinsics):
     return pose_graph
 
 
+# optimize posegraph based on specific optimization parameters
 def optimize_pose_for_frag(pose_graph, max_correspondence_dist, loop_closure, edge_prune, ref_node):
     method = o3d.registration.GlobalOptimizationLevenbergMarquardt()
     criteria = o3d.registration.GlobalOptimizationConvergenceCriteria()
@@ -167,101 +178,126 @@ def optimize_pose_for_frag(pose_graph, max_correspondence_dist, loop_closure, ed
     o3d.registration.global_optimization(pose_graph, method, criteria, option)
     return pose_graph
 
-
-# TODO: Integrate RGBD images into a mesh that can be projected onto 3D surface
+# combine RGBD images into a TSDF Volume and create the mesh
 def integrate_RGBD(pose_graph, color_files, depth_files, voxel_cube_size):
     volume = o3d.integration.ScalableTSDFVolume(
         voxel_length= voxel_cube_size/ 512.0,
         sdf_trunc=0.04,
         color_type=o3d.integration.TSDFVolumeColorType.RGB8)
     for i in range(len(pose_graph.nodes)):
-        rgbd = create_one_RGBD(color_file= color_files[i], depth_file=depth_files[i])
+        rgbd = create_one_RGBD(color_file=color_array[i], depth_file=depth_array[i])
         pose = pose_graph.nodes[i].pose
         volume.integrate(rgbd, intrinsic, np.linalg.inv(pose))
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
     return mesh
 
-# TODO: Convert RGBD fragment into pointcloud fragment for registration
-def RGBD_to_pointcloud():
-    return True
+# convert RGBD Image into pointcloud
+def RGBD_to_pointcloud(rgbd, intrinsics):
+    pc = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsics)
+    pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+    o3d.geometry.PointCloud.estimate_normals(pc, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    return pc
 
+# TODO: registration -> pairwise registration for adjacent and global registration to global pointcloud
 '''
-Variables Used:
-intrinsics_obtained: boolean to check if intrinsics of the camera was retrieved
-s: counter for objects used as 'source'
-t: counter for objects used as 'target'
+Steps needed:
+1) Create a global pointcloud that stores registered clouds
+2) Create a pose graph
+3) register adjacent frames using pairwise
+4) register the adjacent-frame-pointcloud to the global pointcloud
+4) if registration done correctly, optimzie pose graph
+5) transform target pointcloud based on pose graph
+6) output global pointcloud
 '''
-intrinsics_obtained = False
-s = 0
-t = 0
-''''''
 
-# Create a pipeline
-pipeline = rs.pipeline()
 
-# Create a config and configure the pipeline to stream different resolutions of color and depth streams
-config = rs.config()
-config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 640, 480, rs.format.rgb8, 30)
+if __name__ == "__main__":
+    '''
+    Variables Used:
+    intrinsics_obtained: boolean to check if intrinsics of the camera was retrieved
+    s: counter for objects used as 'source'
+    t: counter for objects used as 'target'
+    '''
+    intrinsics_obtained = False
+    s = 0
+    t = 0
+    color_array = []
+    depth_array = []
+    ''''''
 
-# Start streaming
-profile = pipeline.start(config)
+    # Create a pipeline
+    pipeline = rs.pipeline()
 
-# Config properties of the IntelRealSense D435
-depth_sensor = profile.get_device().first_depth_sensor()
-laserpwr = depth_sensor.get_option(rs.option.laser_power)
-depth_sensor.set_option(rs.option.emitter_enabled, 1)
-depth_sensor.set_option(rs.option.laser_power, laserpwr)
-depth_sensor.set_option(rs.option.depth_units, 0.0001)
-depth_sensor.set_option(rs.option.visual_preset, 3)
-depth_scale = depth_sensor.get_depth_scale()
+    # Create a config and configure the pipeline to stream different resolutions of color and depth streams
+    config = rs.config()
+    config.enable_stream(rs.stream.depth, 848, 480, rs.format.z16, 30)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.rgb8, 30)
 
-# Truncate how far sensor can see
-clipping_distance_in_meters = 0.75
-clipping_distance = clipping_distance_in_meters / depth_scale
+    # Start streaming
+    profile = pipeline.start(config)
 
-# Aligning depth frame with color frame
-align_to = rs.stream.color
-align = rs.align(align_to)
+    # Config properties of the IntelRealSense D435
+    depth_sensor = profile.get_device().first_depth_sensor()
+    laserpwr = depth_sensor.get_option(rs.option.laser_power)
+    depth_sensor.set_option(rs.option.emitter_enabled, 1)
+    depth_sensor.set_option(rs.option.laser_power, laserpwr)
+    depth_sensor.set_option(rs.option.depth_units, 0.0001)
+    depth_sensor.set_option(rs.option.visual_preset, 3)
+    depth_scale = depth_sensor.get_depth_scale()
 
-# Streaming loop
-try:
+    # Truncate how far sensor can see
+    clipping_distance_in_meters = 0.75
+    clipping_distance = clipping_distance_in_meters / depth_scale
 
-    while True:
+    # Aligning depth frame with color frame
+    align_to = rs.stream.color
+    align = rs.align(align_to)
 
-        dt0 = datetime.now()
+    # Streaming loop
+    try:
 
-        # Wait for the next set of frames from the camera
-        frames = pipeline.wait_for_frames()
+        while True:
 
-        # Align Depth and Color Frame
-        aligned_frames = align.process(frames)
-        aligned_depth_frame = aligned_frames.get_depth_frame()
-        color_frame = aligned_frames.get_color_frame()
+            dt0 = datetime.now()
 
-        # Try This:
-        intrinsic = get_intrinsic_matrix(color_frame)
-        intrinsics_obtained = True
+            # Wait for the next set of frames from the camera
+            frames = pipeline.wait_for_frames()
 
-        #Obtain intrinsics and switch to post-process methods
-        if intrinsics_obtained:
-            break
+            # Align Depth and Color Frame
+            aligned_frames = align.process(frames)
+            aligned_depth_frame = aligned_frames.get_depth_frame()
+            color_frame = aligned_frames.get_color_frame()
 
-        # Make sure frames come in together
-        if not aligned_depth_frame or not color_frame:  # or not depth_2 or not color_2:
-            continue
+            # Try This:
+            intrinsic = get_intrinsic_matrix(color_frame)
+            intrinsics_obtained = True
 
-        process_time = datetime.now() - dt0
-        print("FPS: " + str(1 / process_time.total_seconds()))
+            #Obtain intrinsics and switch to post-process methods
+            if intrinsics_obtained:
+                break
 
-finally:
-    pipeline.stop()
+            # Make sure frames come in together
+            if not aligned_depth_frame or not color_frame:  # or not depth_2 or not color_2:
+                continue
 
-filepath = "C:/Users/rjsre/PycharmProjects/Trial3/src/newdata/"
-[color_files, depth_files] = get_rgbd_file_lists(filepath)
+            process_time = datetime.now() - dt0
+            print("FPS: " + str(1 / process_time.total_seconds()))
 
-pose_graph = create_RGBD_posegraph(50, color_files=color_files, depth_files=depth_files, intrinsics=intrinsic)
-pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.05, True, 0.25, 0)
-mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4)
-o3d.visualization.draw_geometries([mesh])
+    finally:
+        pipeline.stop()
+
+    filepath = "C:/Users/rjsre/PycharmProjects/Trial3/src/newdata/"
+    [color_files, depth_files] = get_rgbd_file_lists(filepath)
+    n_files = len(color_files)
+    for i in range(0, n_files):
+        color_image = o3d.io.read_image(color_files[i])
+        depth_image = o3d.io.read_image(depth_files[i])
+        color_array.append(color_image)
+        depth_array.append(depth_image)
+
+
+    pose_graph = create_RGBD_posegraph(5, color_files=color_array, depth_files=depth_array, intrinsics=intrinsic)
+    pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.01, 0.1, 0.25, 0)
+    mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4.0)
+    o3d.visualization.draw_geometries([mesh])
