@@ -41,14 +41,24 @@ from os.path import exists, isfile, join, splitext
 import re
 
 
-# Sorts files in numerical order
+'''
+Function: takes in an ordered list of files and orders them by the number in their title
+
+Param: file_list_ordered -> takes in a list of files that are in order
+Output: takes in a list of ordered files and order them by the number in their title
+'''
 def sorted_alphanum(file_list_ordered):
     convert = lambda text: int(text) if text.isdigit() else text
     alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
     return sorted(file_list_ordered, key=alphanum_key)
 
 
-# Obtain files from provided path and sort them
+'''
+Function: looks at the path for the folder of files and put them in an ordered list
+
+Param: path -> path to the folder of ordered files
+Output: sorted list of files in alphanumerical order
+'''
 def get_file_list(path, extension=None):
     if extension is None:
         file_list = [path + f for f in listdir(path) if isfile(join(path, f))]
@@ -61,23 +71,38 @@ def get_file_list(path, extension=None):
     file_list = sorted_alphanum(file_list)
     return file_list
 
+'''
+Function: path to umbrella folder that contains color and depth files will rename folders in it to the same path
 
-# join pathname to all folders present under the umbrella folder
+Param: path_dataset -> path to the folder which contains color and depth
+folder_names -> name of folders in the umbrella to rename them
+
+Output: path name
+'''
 def add_if_exists(path_dataset, folder_names):
     for folder_name in folder_names:
         if exists(join(path_dataset, folder_name)):
             path = join(path_dataset, folder_name)
     return path
 
+'''
+Function: get the path to the color and depth folders
 
-# obtain color and depth folders
+Param: path_dataset -> path to the umbrella folder
+Output: path to the color and depth folder
+'''
 def get_rgbd_folders(path_dataset):
     path_color = add_if_exists(path_dataset, ["image/", "rgb/", "color/"])
     path_depth = join(path_dataset, "depth/")
     return path_color, path_depth
 
 
-# obtain color and depth files from folders
+'''
+Function: obtain files from both the color and depth folders
+
+Param: path_dataset -> path to the umbrella folder
+Output: obtain color and depth files, ordered, respectively
+'''
 def get_rgbd_file_lists(path_dataset):
     path_color, path_depth = get_rgbd_folders(path_dataset)
     color_files = get_file_list(path_color, ".jpg") + \
@@ -86,7 +111,12 @@ def get_rgbd_file_lists(path_dataset):
     return color_files, depth_files
 
 
-# Obtain instrinsics of the camera
+'''
+Function: obtain instrinsic configuration of Intel Realsense
+
+Param: frame -> frame received when IntelRealsense is on
+Output: get intrinsics matrix configuration to use in Open3D library
+'''
 def get_intrinsic_matrix(frame):
     intrinsics = frame.profile.as_video_stream_profile().intrinsics
     out = o3d.camera.PinholeCameraIntrinsic(640, 480, intrinsics.fx,
@@ -96,19 +126,39 @@ def get_intrinsic_matrix(frame):
     return out
 
 
-# creates RGBD image from color image and depth image
+'''
+Function: create RGBD Image from color and depth file
+
+Param: color file -> .jpg file contains color data
+depth_file -> .png file contains depth data
+
+Output: open 3D RGBD Image
+'''
 def create_one_RGBD(color_file, depth_file):
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(color_file, depth_file, depth_scale=1.0/depth_scale,
                                                                     depth_trunc=clipping_distance_in_meters,
                                                                     convert_rgb_to_intensity=False)
     return rgbd_image
 
-# register locally RGBD Images using RGBD Odometry
+'''
+Function: register temporally adjacent RGBD Images
+
+Param: s -> counter for source RGBD images used
+t -> counter for target RGBD images used
+color_files -> list of colored files from folder
+depth_files -> list of depth files from folder
+intrinsics -> internal matrix configuration of camera
+
+
+Output: success bool, transformation matrix between source and target, information matrix on the transformation
+'''
 def register_adjacent_RGBDs(s,t, color_files, depth_files, intrinsics):
 
+    # obtain RGBD from color and depth files
     source_rgbd = create_one_RGBD(color_files[s], depth_files[s])
     target_rgbd = create_one_RGBD(color_files[t], depth_files[t])
 
+    # setup initial transformation
     option = o3d.odometry.OdometryOption()
     odometry_init = np.identity(4)
 
@@ -118,9 +168,21 @@ def register_adjacent_RGBDs(s,t, color_files, depth_files, intrinsics):
 
     return success, transformation, info
 
-# register globally using OpenCV ORB feature to find sparse overlap
+'''
+Function: register spatially non-adjacent RGBD Images
+
+Param: s -> counter for source RGBD images used
+t -> counter for target RGBD images used
+color_files -> list of colored files from folder
+depth_files -> list of depth files from folder
+intrinsics -> internal matrix configuration of camera
+
+
+Output: success bool, transformation matrix between source and target, information matrix on the transformation
+'''
 def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
 
+    # obtain RGBD from color and depth files
     source_rgbd = create_one_RGBD(color_files[s], depth_files[s])
     target_rgbd = create_one_RGBD(color_files[t], depth_files[t])
 
@@ -129,6 +191,7 @@ def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
     # Compute wide baseline matching for non-adjacent images (align them by matching sparse features)
     success_matching, odometry_init = opencv_pose_estimation.pose_estimation(source_rgbd, target_rgbd, intrinsics, False)
 
+    # If frames were able to be matched, then continue with odometry transformation
     if success_matching:
 
         [success, transformation, info] = o3d.odometry.compute_rgbd_odometry(source_rgbd, target_rgbd, intrinsics,
@@ -145,57 +208,119 @@ def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
     return success, transformation, info
 
 '''
-Create pose graph for all created RGBD images and then register globally every frame
+Function: Create pose graph for all created RGBD images and then register globally every frame
+
+Param: fragment_size -> number at which global registration will occur
+color_files -> list of color images
+depth_files -> list of depth images
+intrinsics -> internal matrix configuration of camera
+
+Output: pose graph for all images in dataset
 '''
 def create_RGBD_posegraph(fragment_size, color_files, depth_files, intrinsics):
+
+    # Create pose graph
     pose_graph = o3d.registration.PoseGraph()
+
+    # Set up initial transformation
     transformation = np.identity(4)
+
     pose_graph.nodes.append(o3d.registration.PoseGraphNode(transformation))
+
+    # for loops that register each frame to every successor frame and appends nodes and edges to pose graph
     for s in range(len(color_files)):
         for t in range(s+1, len(color_files)):
             if t == s + 1:
+
+                # adjacent performed for temporally adjacent frames
                 [success, trans, info] = register_adjacent_RGBDs(s, t, color_files, depth_files,intrinsics)
                 transformation = np.dot(trans, transformation)
                 trans_inv = np.linalg.inv(transformation)
+
                 pose_graph.nodes.append(o3d.registration.PoseGraphNode(trans_inv))
                 pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, trans, info, uncertain=False))
+
+            # every fragment_size, register globally
             elif (s % fragment_size == 0) and (t % fragment_size == 0):
+
                 [success, trans, info] = register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics)
+
                 if success:
                     pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, trans, info, uncertain=True))
     return pose_graph
 
 
-# optimize posegraph based on specific optimization parameters
+'''
+Function: Optimize Pose graph based off user configurations
+
+Param: pose_graph -> pose graph collected from registration
+max_correspondence_dist -> maximum distance between two points when performing registration
+loop_closure -> preference to forcing closure with pose graph
+edge_prune -> smooth out pose graph trajectory
+ref_node -> starting point for pose graph
+
+Output: optimzied pose graph
+'''
 def optimize_pose(pose_graph, max_correspondence_dist, loop_closure, edge_prune, ref_node):
+
+    # LevenbergMarguardt optimization favored for Open3D registration closure
     method = o3d.registration.GlobalOptimizationLevenbergMarquardt()
+
+    #Set configuration to optimization parameters
     criteria = o3d.registration.GlobalOptimizationConvergenceCriteria()
     option = o3d.registration.GlobalOptimizationOption(
         max_correspondence_distance=max_correspondence_dist,
         edge_prune_threshold=edge_prune,
         preference_loop_closure=loop_closure,
         reference_node=ref_node)
+
+    #Perform the optimization
     o3d.registration.global_optimization(pose_graph, method, criteria, option)
+
     return pose_graph
 
-# combine RGBD images into a TSDF Volume and create the mesh
+'''
+Function: Create mesh using Truncated Signed Distance Function (TSDF) volume integration from RGBD Images
+
+Param: pose_graph -> optimized pose-graph from RGBD images
+color_files -> list of color images
+depth_files -> list of depth images
+voxel_cube_size -> size of point to which the integration will scale to
+
+Output: mesh of RGBD images
+'''
 def integrate_RGBD(pose_graph, color_files, depth_files, voxel_cube_size):
+
+    # integrate with given pose_graph
     volume = o3d.integration.ScalableTSDFVolume(
         voxel_length= voxel_cube_size/ 512.0,
         sdf_trunc=0.04,
         color_type=o3d.integration.TSDFVolumeColorType.RGB8)
+
+    # Transform all RGBD images based off pose graph
     for i in range(len(pose_graph.nodes)):
         rgbd = create_one_RGBD(color_file=color_array[i], depth_file=depth_array[i])
         pose = pose_graph.nodes[i].pose
         volume.integrate(rgbd, intrinsic, np.linalg.inv(pose))
+
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
+
     return mesh
 
-# convert RGBD Image into pointcloud
+'''
+Function: Convert RGBD Image into open3d Pointcloud
+
+Param: rgbd -> RGBD Image used to create pointcloud
+intrinsics -> internal matrix configuration of camera
+
+Output: pointcloud from RGBD Image
+'''
 def RGBD_to_pointcloud(rgbd, intrinsics):
     pc = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsics)
     pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+
+    # Estimate normals to facilitate pointcloud registration
     o3d.geometry.PointCloud.estimate_normals(pc, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     return pc
 
@@ -212,17 +337,30 @@ Steps needed:
 6) output global pointcloud
 '''
 
+'''
+Function: registration of two pointclouds to each other locally
+
+Param: source -> source RGBD image
+target -> RGBD image for registration
+intrinsics -> internal matrix configuration of camera
+vozel_radius -> size of voxel cube that represents the individual point the algorithm taes
+
+Output: transformation matrix to transform target to match source, information matrix on the transformation information
+'''
 def pairwise_registration(source, target, intrinsics, voxel_radius):
 
+    # Set up registration by obtaining pointclouds
     source_pc = RGBD_to_pointcloud(source, intrinsics)
     target_pc = RGBD_to_pointcloud(target, intrinsics)
     current_transformation = np.identity(4)
 
+    # Perform Iterative Closeset Point Algorithm to register both pointclouds in a coarse fashion
     icp = o3d.registration.registration_icp(source_pc, target_pc, voxel_radius * 1.5, current_transformation,
         o3d.registration.TransformationEstimationPointToPlane())
 
     current_transformation = icp.transformation
 
+    # Perform Iterative Closeset Point Algorithm to register both pointclouds in a fine fashion
     icp_fine = o3d.registration.registration_icp(source_pc, target_pc, voxel_radius, current_transformation,
         o3d.registration.TransformationEstimationPointToPlane())
 
@@ -233,16 +371,31 @@ def pairwise_registration(source, target, intrinsics, voxel_radius):
 
     return current_transformation, information_icp
 
+
+'''
+Function: registration of two pointclouds in the global space
+
+Param: source -> source RGBD image
+target -> RGBD image for registration
+intrinsics -> internal matrix configuration of camera
+vozel_radius -> size of voxel cube that represents the individual point the algorithm taes
+
+Output: transformation matrix to transform target to match source, information matrix on the transformation information
+'''
 def global_registration(source, target, intrinsics, voxel_radius):
 
+    # Setup by creating pointclouds
     source_pc = RGBD_to_pointcloud(source, intrinsics)
     target_pc = RGBD_to_pointcloud(target, intrinsics)
+
     current_transformation = np.identity(4)
 
+   # Obtain information matrix in order to justify whether these two clouds should register or not>
     information_icp = o3d.registration.get_information_matrix_from_point_clouds(
         source_pc, target_pc, voxel_radius,
         current_transformation)
 
+    # Account for all cases in which the registration
     if current_transformation.trace() == 4.0:
         current_transformation = np.identity(4)
         information_icp = np.zeros((6, 6))
@@ -276,6 +429,8 @@ def registration(rgbd_array, intrinsics, pc_list):
     return pose_graph, pc_list
 
 '''
+COMMENTATED CODE IN TRIAL FOR ERROR CORRECTION ALGORITHM
+
 def step_registration(source, target):
 
     # Get pointcloud and features for global registration
@@ -323,17 +478,11 @@ def step_registration(source, target):
 '''
 
 
-class VectorArrayInterface(object):
-    def __init__(self, x, y, z):
-        self.x, self.y, self.z = x, y, z
-
-    def __array__(self, dtype=None):
-        if dtype:
-            return np.array([self.x, self.y, self.z], dtype=dtype)
-        else:
-            return np.array([self.x, self.y, self.z])
-
+'''
+Main Function to run Program for pose-processing efforts in preservation of art in #D. 
+'''
 if __name__ == "__main__":
+
     '''
     Variables Used:
     intrinsics_obtained: boolean to check if intrinsics of the camera was retrieved
@@ -343,9 +492,8 @@ if __name__ == "__main__":
     depth_array = depth file array of o3d.geometry.Images used to create RGBD
     rbgd_array = array of o3d.geometry.RGBDImage
     base = pointcloud that holds all registered points
-    source = poincloud to register
-    target = next pointcloud to register
     '''
+
     intrinsics_obtained = False
     s = 0
     t = 0
@@ -386,7 +534,7 @@ if __name__ == "__main__":
     align_to = rs.stream.color
     align = rs.align(align_to)
 
-    # Streaming loop
+    # Streaming loop for IntelRealSense
     try:
 
         while True:
@@ -401,7 +549,7 @@ if __name__ == "__main__":
             aligned_depth_frame = aligned_frames.get_depth_frame()
             color_frame = aligned_frames.get_color_frame()
 
-            # Try This:
+            # Get intrinsics of the camera
             intrinsic = get_intrinsic_matrix(color_frame)
             intrinsics_obtained = True
 
@@ -413,15 +561,23 @@ if __name__ == "__main__":
             if not aligned_depth_frame or not color_frame:  # or not depth_2 or not color_2:
                 continue
 
+            # Obtain frames per second data
             process_time = datetime.now() - dt0
             print("FPS: " + str(1 / process_time.total_seconds()))
 
     finally:
+        # End program once intrinsics are obtained
         pipeline.stop()
 
+    # Path to folder that contains color and depth images
     filepath = "C:/Users/rjsre/PycharmProjects/Trial3/src/newdata/"
+
     [color_files, depth_files] = get_rgbd_file_lists(filepath)
+
+    # number of files for iterative loops
     n_files = len(color_files)
+
+    # Collect information from folders into array that hold open3D images and o3d RGBD images.
     for i in range(0, n_files):
         color_image = o3d.io.read_image(color_files[i])
         depth_image = o3d.io.read_image(depth_files[i])
@@ -430,19 +586,30 @@ if __name__ == "__main__":
         rgbd = create_one_RGBD(color_image, depth_image)
         rgbd_array.append(rgbd)
 
+    # Perform pointcloud registration
     pose_graph, pc_list = registration(rgbd_array, intrinsic, pc_list)
     optimize_pose(pose_graph, 0.01, 0.1, 0.25, 0)
 
+    # Collected all optimzied data and put it under one pointclouds.
     for node in range(len(pc_list)-1):
         pc_list[node].transform(pose_graph.nodes[node].pose)
         base += pc_list[node]
         base = o3d.geometry.PointCloud.voxel_down_sample(base, 0.005)
+
+    # Show the result
     o3d.visualization.draw_geometries([base])
 
 '''
+RGBD INTEGRATION PIPELINE
+
+    # create pose graph based on RGBD images
     pose_graph = create_RGBD_posegraph(5, color_files=color_array, depth_files=depth_array, intrinsics=intrinsic)
-    pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.01, 0.1, 0.25, 0)
+    pose_graph_optimization = optimize_pose(pose_graph, 0.01, 0.1, 0.25, 0)
+    
+    # Obtain mesh from RGBD surface reconstruction using TSDF
     mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4.0)
+    
+    # Draw final result
     o3d.visualization.draw_geometries([mesh])
 '''
 
