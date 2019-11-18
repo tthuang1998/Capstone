@@ -167,7 +167,7 @@ def create_RGBD_posegraph(fragment_size, color_files, depth_files, intrinsics):
 
 
 # optimize posegraph based on specific optimization parameters
-def optimize_pose_for_frag(pose_graph, max_correspondence_dist, loop_closure, edge_prune, ref_node):
+def optimize_pose(pose_graph, max_correspondence_dist, loop_closure, edge_prune, ref_node):
     method = o3d.registration.GlobalOptimizationLevenbergMarquardt()
     criteria = o3d.registration.GlobalOptimizationConvergenceCriteria()
     option = o3d.registration.GlobalOptimizationOption(
@@ -199,6 +199,7 @@ def RGBD_to_pointcloud(rgbd, intrinsics):
     o3d.geometry.PointCloud.estimate_normals(pc, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     return pc
 
+
 # TODO: registration -> pairwise registration for adjacent and global registration to global pointcloud
 '''
 Steps needed:
@@ -210,50 +211,71 @@ Steps needed:
 5) transform target pointcloud based on pose graph
 6) output global pointcloud
 '''
-def cal_normal_angle(norm1, norm2):
 
-    angle = np.arccos(np.abs(norm1[0]*norm2[0] + norm1[1]*norm2[1] + norm1[2]*norm2[2]) /
-                     np.sqrt(norm1[0]*norm1[0] + norm1[1]*norm1[1] + norm1[2]*norm1[2]) /
-                     np.sqrt(norm2[0]*norm2[0] + norm2[1]*norm2[1] + norm2[2]*norm2[2]))
-    return angle
+def pairwise_registration(source, target, intrinsics, voxel_radius):
 
-def cal_angle(pl_norm, R_dir):
-    angle_in_radians = \
-        np.arccos(
-            np.abs(pl_norm[0] * R_dir[0] + pl_norm[1] * R_dir[1] + pl_norm[2] * R_dir[2])
-        )
+    source_pc = RGBD_to_pointcloud(source, intrinsics)
+    target_pc = RGBD_to_pointcloud(target, intrinsics)
+    current_transformation = np.identity(4)
 
-    return angle_in_radians
+    icp = o3d.registration.registration_icp(source_pc, target_pc, voxel_radius * 1.5, current_transformation,
+        o3d.registration.TransformationEstimationPointToPlane())
 
-# Setup cloud for registration
-def setup_cloud(pointcloud):
-    pc_temp = copy.deepcopy(pointcloud)
-    o3d.estimate_normals(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    pc_fph = o3d.compute_fpfh_feature(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
-    return pc_temp, pc_fph
+    current_transformation = icp.transformation
 
-# Returns normals of given point cloud
-def get_normals(pointcloud):
-    mean_normal_x = 0
-    mean_normal_y = 0
-    mean_normal_z = 0
+    icp_fine = o3d.registration.registration_icp(source_pc, target_pc, voxel_radius, current_transformation,
+        o3d.registration.TransformationEstimationPointToPlane())
 
-    normal_count = 0
+    current_transformation = icp_fine.transformation
 
-    for normal in pointcloud.normals:
-        normal_count += 1
-        mean_normal_x += normal[0]
-        mean_normal_y += normal[1]
-        mean_normal_z += normal[2]
+    information_icp = o3d.registration.get_information_matrix_from_point_clouds(source_pc, target_pc, voxel_radius * 1.5,
+        current_transformation)
 
-    mean_normal_x /= normal_count
-    mean_normal_y /= normal_count
-    mean_normal_z /= normal_count
+    return current_transformation, information_icp
 
-    rotation_dir = VectorArrayInterface(mean_normal_x, mean_normal_y, mean_normal_z).__array__()
+def global_registration(source, target, intrinsics, voxel_radius):
 
-    return rotation_dir
+    source_pc = RGBD_to_pointcloud(source, intrinsics)
+    target_pc = RGBD_to_pointcloud(target, intrinsics)
+    current_transformation = np.identity(4)
 
+    information_icp = o3d.registration.get_information_matrix_from_point_clouds(
+        source_pc, target_pc, voxel_radius,
+        current_transformation)
+
+    if current_transformation.trace() == 4.0:
+        current_transformation = np.identity(4)
+        information_icp = np.zeros((6, 6))
+
+    elif information_icp[5, 5] / min(len(copy.deepcopy(source_pc.points)),
+                                     len(copy.deepcopy(target_pc.points))) < 0.3:
+        current_transformation = np.identity(4)
+        information_icp = np.zeros((6, 6))
+
+    return current_transformation, information_icp
+
+def registration(rgbd_array, intrinsics, pc_list):
+
+    pose_graph = o3d.registration.PoseGraph()
+    odometry = np.identity(4)
+    odometry_global = np.identity(4)
+
+    for s in range(len(rgbd_array)):
+        pc_list.append(RGBD_to_pointcloud(rgbd_array[s], intrinsics))
+        for t in range(s+1, len(rgbd_array)):
+            if t == s + 1:
+                c_odometry, information = pairwise_registration(rgbd_array[s], rgbd_array[t], intrinsics, 0.005)
+
+                odometry = np.dot(c_odometry, odometry)
+                pose_graph.nodes.append(o3d.registration.PoseGraphNode(np.linalg.inv(odometry)))
+                pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, odometry, information, uncertain=False))
+            elif (s % 50 == 0) and (t % 50 == 0):
+                c_odometry, information = global_registration(rgbd_array[s], rgbd_array[t], intrinsics, 0.005)
+                pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, c_odometry, information, uncertain=True))
+
+    return pose_graph, pc_list
+
+'''
 def step_registration(source, target):
 
     # Get pointcloud and features for global registration
@@ -282,7 +304,6 @@ def step_registration(source, target):
     # Global Registration
 
     result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, feature_source, feature_target)
-    '''
     result_ransac = o3d.registration.registration_ransac_based_on_feature_matching(
         source_temp, target_temp, feature_source, feature_target, distance_threshold,
         o3d.registration.TransformationEstimationPointToPoint(False), 4, [
@@ -290,7 +311,6 @@ def step_registration(source, target):
             o3d.registration.CorrespondenceCheckerBasedOnDistance(
                 distance_threshold)
         ], o3d.registration.RANSACConvergenceCriteria(4000000, 500))
-    '''
 
     #Refine registration
 
@@ -301,9 +321,6 @@ def step_registration(source, target):
     information_icp = o3d.get_information_matrix_from_point_clouds(source_temp, target_temp, 0.01, refine_result.transformation)
     return refine_result.transformation, information_icp
 '''
-    Create a global pointcloud that stores registered clouds
-'''
-#def global_pointcloud(color_files, depth_files, intrinsics):
 
 
 class VectorArrayInterface(object):
@@ -322,12 +339,23 @@ if __name__ == "__main__":
     intrinsics_obtained: boolean to check if intrinsics of the camera was retrieved
     s: counter for objects used as 'source'
     t: counter for objects used as 'target'
+    color_array = color file array of o3d.geometry.Images used to create RGBD
+    depth_array = depth file array of o3d.geometry.Images used to create RGBD
+    rbgd_array = array of o3d.geometry.RGBDImage
+    base = pointcloud that holds all registered points
+    source = poincloud to register
+    target = next pointcloud to register
     '''
     intrinsics_obtained = False
     s = 0
     t = 0
     color_array = []
     depth_array = []
+    rgbd_array = []
+    pc_list = []
+    base = o3d.geometry.PointCloud()
+    source = o3d.geometry.PointCloud()
+    target = o3d.geometry.PointCloud()
     ''''''
 
     # Create a pipeline
@@ -399,9 +427,23 @@ if __name__ == "__main__":
         depth_image = o3d.io.read_image(depth_files[i])
         color_array.append(color_image)
         depth_array.append(depth_image)
+        rgbd = create_one_RGBD(color_image, depth_image)
+        rgbd_array.append(rgbd)
 
+    pose_graph, pc_list = registration(rgbd_array, intrinsic, pc_list)
+    optimize_pose(pose_graph, 0.01, 0.1, 0.25, 0)
 
+    for node in range(len(pc_list)-1):
+        pc_list[node].transform(pose_graph.nodes[node].pose)
+        base += pc_list[node]
+        base = o3d.geometry.PointCloud.voxel_down_sample(base, 0.005)
+    o3d.visualization.draw_geometries([base])
+
+'''
     pose_graph = create_RGBD_posegraph(5, color_files=color_array, depth_files=depth_array, intrinsics=intrinsic)
     pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.01, 0.1, 0.25, 0)
     mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4.0)
     o3d.visualization.draw_geometries([mesh])
+'''
+
+
