@@ -206,11 +206,115 @@ Steps needed:
 2) Create a pose graph
 3) register adjacent frames using pairwise
 4) register the adjacent-frame-pointcloud to the global pointcloud
-4) if registration done correctly, optimzie pose graph
+4) if registration done correctly, optimize pose graph
 5) transform target pointcloud based on pose graph
 6) output global pointcloud
 '''
+def cal_normal_angle(norm1, norm2):
 
+    angle = np.arccos(np.abs(norm1[0]*norm2[0] + norm1[1]*norm2[1] + norm1[2]*norm2[2]) /
+                     np.sqrt(norm1[0]*norm1[0] + norm1[1]*norm1[1] + norm1[2]*norm1[2]) /
+                     np.sqrt(norm2[0]*norm2[0] + norm2[1]*norm2[1] + norm2[2]*norm2[2]))
+    return angle
+
+def cal_angle(pl_norm, R_dir):
+    angle_in_radians = \
+        np.arccos(
+            np.abs(pl_norm[0] * R_dir[0] + pl_norm[1] * R_dir[1] + pl_norm[2] * R_dir[2])
+        )
+
+    return angle_in_radians
+
+# Setup cloud for registration
+def setup_cloud(pointcloud):
+    pc_temp = copy.deepcopy(pointcloud)
+    o3d.estimate_normals(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pc_fph = o3d.compute_fpfh_feature(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
+    return pc_temp, pc_fph
+
+# Returns normals of given point cloud
+def get_normals(pointcloud):
+    mean_normal_x = 0
+    mean_normal_y = 0
+    mean_normal_z = 0
+
+    normal_count = 0
+
+    for normal in pointcloud.normals:
+        normal_count += 1
+        mean_normal_x += normal[0]
+        mean_normal_y += normal[1]
+        mean_normal_z += normal[2]
+
+    mean_normal_x /= normal_count
+    mean_normal_y /= normal_count
+    mean_normal_z /= normal_count
+
+    rotation_dir = VectorArrayInterface(mean_normal_x, mean_normal_y, mean_normal_z).__array__()
+
+    return rotation_dir
+
+def step_registration(source, target):
+
+    # Get pointcloud and features for global registration
+    source_temp, feature_source = setup_cloud(source)
+    target_temp, feature_target = setup_cloud(target)
+
+    # Get normal of plane for each pointcloud
+    source_dir = get_normals(source_temp)
+    target_dir = get_normals(target_temp)
+
+    #Normals towards camera
+    o3d.orient_normals_towards_camera_location(source_temp)
+    o3d.orient_normals_towards_camera_location(target_temp)
+
+    # Get angle between normals of pointclouds
+    angle = cal_angle(source_dir, target_dir)
+
+    if (angle < 0.05):
+        rotation_dir = target_dir
+    else:
+        rotation_dir = source_dir
+
+    # Registration parameter
+    distance_threshold = 0.1 * 1.5
+
+    # Global Registration
+
+    result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, feature_source, feature_target)
+    '''
+    result_ransac = o3d.registration.registration_ransac_based_on_feature_matching(
+        source_temp, target_temp, feature_source, feature_target, distance_threshold,
+        o3d.registration.TransformationEstimationPointToPoint(False), 4, [
+            o3d.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+            o3d.registration.CorrespondenceCheckerBasedOnDistance(
+                distance_threshold)
+        ], o3d.registration.RANSACConvergenceCriteria(4000000, 500))
+    '''
+
+    #Refine registration
+
+    refine_result = o3d.registration.registration_icp(
+        source_temp, target_temp, distance_threshold, result.transformation,
+        o3d.registration.TransformationEstimationPointToPlane())
+
+    information_icp = o3d.get_information_matrix_from_point_clouds(source_temp, target_temp, 0.01, refine_result.transformation)
+    return refine_result.transformation, information_icp
+'''
+    Create a global pointcloud that stores registered clouds
+'''
+#def global_pointcloud(color_files, depth_files, intrinsics):
+
+
+class VectorArrayInterface(object):
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+    def __array__(self, dtype=None):
+        if dtype:
+            return np.array([self.x, self.y, self.z], dtype=dtype)
+        else:
+            return np.array([self.x, self.y, self.z])
 
 if __name__ == "__main__":
     '''
