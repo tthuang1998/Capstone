@@ -137,7 +137,7 @@ def register_non_adjacent_RGBDs(s, t, color_files, depth_files, intrinsics):
     return success, transformation, info
 
 
-def create_RGBD_fragments (s, t, fragment_size, color_files, depth_files, intrinsics):
+def create_RGBD_posegraph(fragment_size, color_files, depth_files, intrinsics):
     pose_graph = o3d.registration.PoseGraph()
     transformation = np.identity(4)
     pose_graph.nodes.append(o3d.registration.PoseGraphNode(transformation))
@@ -155,17 +155,32 @@ def create_RGBD_fragments (s, t, fragment_size, color_files, depth_files, intrin
                     pose_graph.edges.append(o3d.registration.PoseGraphEdge(s, t, trans, info, uncertain=True))
     return pose_graph
 
-# TODO: optimize created pose_graph for tighter alignment
-def optimize_pose_for_frag():
-    return True
 
-# TODO: Helper function to run optimization of RGBD fragment
-def pose_optimization():
-    return True
+def optimize_pose_for_frag(pose_graph, max_correspondence_dist, loop_closure, edge_prune, ref_node):
+    method = o3d.registration.GlobalOptimizationLevenbergMarquardt()
+    criteria = o3d.registration.GlobalOptimizationConvergenceCriteria()
+    option = o3d.registration.GlobalOptimizationOption(
+        max_correspondence_distance=max_correspondence_dist,
+        edge_prune_threshold=edge_prune,
+        preference_loop_closure=loop_closure,
+        reference_node=ref_node)
+    o3d.registration.global_optimization(pose_graph, method, criteria, option)
+    return pose_graph
+
 
 # TODO: Integrate RGBD images into a mesh that can be projected onto 3D surface
-def integrate_RGBD():
-    return True
+def integrate_RGBD(pose_graph, color_files, depth_files, voxel_cube_size):
+    volume = o3d.integration.ScalableTSDFVolume(
+        voxel_length= voxel_cube_size/ 512.0,
+        sdf_trunc=0.04,
+        color_type=o3d.integration.TSDFVolumeColorType.RGB8)
+    for i in range(len(pose_graph.nodes)):
+        rgbd = create_one_RGBD(color_file= color_files[i], depth_file=depth_files[i])
+        pose = pose_graph.nodes[i].pose
+        volume.integrate(rgbd, intrinsic, np.linalg.inv(pose))
+    mesh = volume.extract_triangle_mesh()
+    mesh.compute_vertex_normals()
+    return mesh
 
 # TODO: Convert RGBD fragment into pointcloud fragment for registration
 def RGBD_to_pointcloud():
@@ -242,3 +257,11 @@ try:
 
 finally:
     pipeline.stop()
+
+filepath = "C:/Users/rjsre/PycharmProjects/Trial3/src/newdata/"
+[color_files, depth_files] = get_rgbd_file_lists(filepath)
+
+pose_graph = create_RGBD_posegraph(50, color_files=color_files, depth_files=depth_files, intrinsics=intrinsic)
+pose_graph_optimization = optimize_pose_for_frag(pose_graph, 0.05, True, 0.25, 0)
+mesh = integrate_RGBD(pose_graph_optimization, color_files, depth_files, 4)
+o3d.visualization.draw_geometries([mesh])
