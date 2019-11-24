@@ -428,6 +428,13 @@ def registration(rgbd_array, intrinsics, pc_list):
 
     return pose_graph, pc_list
 
+def surface_reconstruction(pc, radius):
+    o3d.geometry.PointCloud.estimate_normals(pc, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(pc, radius)
+
+    return mesh
+
+
 '''
 COMMENTATED CODE IN TRIAL FOR ERROR CORRECTION ALGORITHM
 
@@ -596,8 +603,11 @@ if __name__ == "__main__":
         base += pc_list[node]
         base = o3d.geometry.PointCloud.voxel_down_sample(base, 0.005)
 
+    mesh = surface_reconstruction(base, 0.1)
+
     # Show the result
-    o3d.visualization.draw_geometries([base])
+    o3d.visualization.draw_geometries([mesh])
+
 
 '''
 RGBD INTEGRATION PIPELINE

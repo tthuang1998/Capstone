@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="8177d440-2220-4921-b13d-255e5211b0e2" name="Default Changelist" comment="">
+    <list default="true" id="8177d440-2220-4921-b13d-255e5211b0e2" name="Default Changelist" comment="Commented RGBD Integration methods and included a RGBD to pointcloud conversion method along with instructions to code the pointcloud registration and surface reconstruction pipeline.">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/master.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/master.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
@@ -15,8 +16,8 @@
       <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/src/master.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="339">
-              <caret line="611" column="23" selection-start-line="611" selection-start-column="23" selection-end-line="611" selection-end-column="23" />
+            <state relative-caret-position="289">
+              <caret line="608" column="45" selection-start-line="608" selection-start-column="45" selection-end-line="608" selection-end-column="45" />
               <folding>
                 <element signature="e#525#554#0" expanded="true" />
                 <element signature="e#1127#1135#1" />
@@ -45,6 +46,7 @@
                 <element signature="e#12702#12948#1" />
                 <element signature="e#14246#14657#1" />
                 <element signature="e#14711#15697#0" />
+                <element signature="e#15699#17502#1" />
               </folding>
             </state>
           </provider>
@@ -75,7 +77,7 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="RGBD_Integration" />
+        <entry key="$PROJECT_DIR$" value="PointCloud_Registration" />
       </map>
     </option>
   </component>
@@ -225,7 +227,7 @@
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
       <window_info anchor="bottom" id="TODO" order="6" />
       <window_info anchor="bottom" id="Version Control" order="7" weight="0.32956153" />
-      <window_info active="true" anchor="bottom" id="Terminal" order="8" visible="true" weight="0.35643566" />
+      <window_info anchor="bottom" id="Terminal" order="8" weight="0.35643566" />
       <window_info anchor="bottom" id="Event Log" order="9" side_tool="true" />
       <window_info anchor="bottom" id="Python Console" order="10" />
       <window_info anchor="right" id="Commander" internal_type="SLIDING" order="0" type="SLIDING" weight="0.4" />
@@ -286,8 +288,8 @@
   <component name="editorHistoryManager">
     <entry file="file://$PROJECT_DIR$/src/master.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="339">
-          <caret line="611" column="23" selection-start-line="611" selection-start-column="23" selection-end-line="611" selection-end-column="23" />
+        <state relative-caret-position="289">
+          <caret line="608" column="45" selection-start-line="608" selection-start-column="45" selection-end-line="608" selection-end-column="45" />
           <folding>
             <element signature="e#525#554#0" expanded="true" />
             <element signature="e#1127#1135#1" />
@@ -316,6 +318,7 @@
             <element signature="e#12702#12948#1" />
             <element signature="e#14246#14657#1" />
             <element signature="e#14711#15697#0" />
+            <element signature="e#15699#17502#1" />
           </folding>
         </state>
       </provider>
