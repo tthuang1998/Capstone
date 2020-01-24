@@ -38,7 +38,7 @@ class VectorArrayInterface(object):
 
 def capture_ply(pc, count):
     print("Capturing Point Cloud")
-    o3d.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
+    o3d.write_point_cloud("C:/Users/tthua/OneDrive/Documents/Senior Year/Capstone/data{}.ply".format(count), pc, write_ascii=True,
                           compressed=False)
     return
 
@@ -277,7 +277,7 @@ depth_sensor = profile.get_device().first_depth_sensor()
 laserpwr = depth_sensor.get_option(rs.option.laser_power)
 depth_sensor.set_option(rs.option.emitter_enabled, 1)
 depth_sensor.set_option(rs.option.laser_power, laserpwr)
-depth_sensor.set_option(rs.option.gain, 16)
+#depth_sensor.set_option(rs.option.gain, 16)
 depth_sensor.set_option(rs.option.depth_units, 0.0001)
 depth_sensor.set_option(rs.option.visual_preset, 4)
 depth_scale = depth_sensor.get_depth_scale()
@@ -395,7 +395,6 @@ try:
 
             vis.add_geometry(base)
             vis.run()
-            vis.destroy_window()
             capture_ply(base, 1)
             break
 

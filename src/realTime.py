@@ -12,15 +12,15 @@ import modern_robotics as mr
 
 # Get Cloud from rgbd image
 def get_cloud(image, intrinsics):
-    pc = o3d.create_point_cloud_from_rgbd_image(image, intrinsics)
+    pc = o3d.geometry.PointCloud.create_from_rgbd_image(image, intrinsics)
     pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     return pc
 
 # Setup cloud for registration
 def setup_cloud(pointcloud):
     pc_temp = copy.deepcopy(pointcloud)
-    o3d.estimate_normals(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    pc_fph = o3d.compute_fpfh_feature(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
+    o3d.geometry.PointCloud.estimate_normals(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pc_fph = o3d.registration.compute_fpfh_feature(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
     return pc_temp, pc_fph
 
 
@@ -57,8 +57,8 @@ def registration(source, target):
     target_dir = get_normals(target_temp)
 
     #Normals towards camera
-    o3d.orient_normals_towards_camera_location(source_temp)
-    o3d.orient_normals_towards_camera_location(target_temp)
+    o3d.geometry.PointCloud.orient_normals_towards_camera_location(source_temp)
+    o3d.geometry.PointCloud.orient_normals_towards_camera_location(target_temp)
 
     # Get angle between normals of pointclouds
     angle = cal_angle(source_dir, target_dir)
@@ -73,7 +73,7 @@ def registration(source, target):
 
     # Global Registration
 
-    result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, feature_source, feature_target)
+    result = o3d.registration.registration_fast_based_on_feature_matching(source_temp, target_temp, feature_source, feature_target)
     '''
     result_ransac = o3d.registration.registration_ransac_based_on_feature_matching(
         source_temp, target_temp, feature_source, feature_target, distance_threshold,
@@ -90,7 +90,7 @@ def registration(source, target):
         source_temp, target_temp, distance_threshold, result.transformation,
         o3d.registration.TransformationEstimationPointToPlane())
 
-    information_icp = o3d.get_information_matrix_from_point_clouds(source_temp, target_temp, 0.01, refine_result.transformation)
+    information_icp = o3d.registration.get_information_matrix_from_point_clouds(source_temp, target_temp, 0.01, refine_result.transformation)
     return refine_result.transformation, information_icp
 
     '''
@@ -155,7 +155,7 @@ def cal_normal_angle(norm1, norm2):
 
 def capture_ply(pc, count):
     print("Capturing Point Cloud")
-    o3d.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
+    o3d.io.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
                           compressed=False)
     return
 
@@ -171,9 +171,9 @@ def get_intrinsic_matrix(frame):
 
 # Remove bad points
 def preprocess_point_cloud(pointcloud):
-    pc_down = o3d.voxel_down_sample(pointcloud, voxel_size=0.004)
-    o3d.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30))
-    o3d.orient_normals_towards_camera_location(pc_down,)
+    pc_down = o3d.geometry.PointCloud.voxel_down_sample(pointcloud, voxel_size=0.004)
+    o3d.geometry.PointCloud.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30))
+    o3d.geometry.PointCloud.orient_normals_towards_camera_location(pc_down)
 
     return pc_down
 
@@ -182,8 +182,8 @@ def pairwise_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
 
-    result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
-                                                             o3d.FastGlobalRegistrationOption())
+    result = o3d.registration.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
+                                                             o3d.registration.FastGlobalRegistrationOption())
     print("Apply point-to-plane ICP")
     #icp_coarse = o3d.registration.registration_icp(
      #   source_temp, target_temp, voxel_radius * 15, result.transformation,
@@ -204,8 +204,8 @@ def global_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
 
-    result = o3d.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
-                                                             o3d.FastGlobalRegistrationOption())
+    result = o3d.registration.registration_fast_based_on_feature_matching(source_temp, target_temp, source_f, target_f,
+                                                             o3d.registration.FastGlobalRegistrationOption())
 
     #result = o3d.registration_icp(source_temp, target_temp, voxel_radius*1.5, np.identity(4),
                                   #o3d.TransformationEstimationPointToPlane())
@@ -248,14 +248,14 @@ def full_registration(source, target, source_id, target_id, base_id, base,  max_
     odometry = np.dot(transformation_icp, odometry)
     odometry_global = np.dot(transformation_global, odometry_global)
 
-    pose_graph.nodes.append(o3d.PoseGraphNode(np.linalg.inv(odometry)))
+    pose_graph.nodes.append(o3d.registration.PoseGraphNode(np.linalg.inv(odometry)))
 
     if success:
         # Odometry Case for local registration
         pose_graph.edges.append(
-            o3d.PoseGraphEdge(source_id, target_id, transformation_icp, information_icp, uncertain=False))
+            o3d.registration.PoseGraphEdge(source_id, target_id, transformation_icp, information_icp, uncertain=False))
         pose_graph.edges.append(
-            o3d.PoseGraphEdge(base_id, target_id, transformation_icp, information_icp, uncertain=True))
+            o3d.registration.PoseGraphEdge(base_id, target_id, transformation_icp, information_icp, uncertain=True))
 
     # Loop Closure Case for global registration
     # pose_graph.nodes.append(o3d.PoseGraphNode(np.linalg.inv(odometry_global)))
@@ -337,7 +337,7 @@ def custom_draw_geometry_with_key_callback(pcd):
 
     key_to_callback = {}
     key_to_callback[ord("K")] = show
-    o3d.draw_geometries_with_key_callbacks([base], key_to_callback)
+    o3d.visualization.draw_geometries_with_key_callbacks([base], key_to_callback)
 
 
 
@@ -372,7 +372,7 @@ depth_sensor = profile.get_device().first_depth_sensor()
 laserpwr = depth_sensor.get_option(rs.option.laser_power)
 depth_sensor.set_option(rs.option.emitter_enabled, 1)
 depth_sensor.set_option(rs.option.laser_power, laserpwr)
-depth_sensor.set_option(rs.option.gain, 16)
+#depth_sensor.set_option(rs.option.gain, 16)
 depth_sensor.set_option(rs.option.depth_units, 0.0001)
 depth_sensor.set_option(rs.option.visual_preset, 4)
 depth_scale = depth_sensor.get_depth_scale()
@@ -386,13 +386,13 @@ align_to = rs.stream.color
 align = rs.align(align_to)
 
 # Initialize pointClouds used
-source = o3d.PointCloud()
-target = o3d.PointCloud()
+source = o3d.geometry.PointCloud()
+target = o3d.geometry.PointCloud()
 
-feature_source = o3d.Feature()
-feature_target = o3d.Feature()
+feature_source = o3d.registration.Feature()
+feature_target = o3d.registration.Feature()
 
-base = o3d.PointCloud()
+base = o3d.geometry.PointCloud()
 
 # Get IDS
 ids = 0
@@ -400,8 +400,8 @@ idt = 1
 idb = 0
 
 #Attempt TSDF Volume
-volume = o3d.ScalableTSDFVolume(voxel_length=4.0/512.0, sdf_trunc=0.04, color_type=o3d.TSDFVolumeColorType.RGB8)
-mesh = o3d.TriangleMesh()
+volume = o3d.integration.ScalableTSDFVolume(voxel_length=4.0/512.0, sdf_trunc=0.04, color_type=o3d.integration.TSDFVolumeColorType.RGB8)
+mesh = o3d.geometry.TriangleMesh()
 
 #Attempt of RGBD Registration
 rgbd_color = []
@@ -409,7 +409,7 @@ rgbd_depth = []
 
 
 # Initialize visualizer Class Config
-vis = o3d.VisualizerWithKeyCallback()
+vis = o3d.visualization.VisualizerWithKeyCallback()
 vis.create_window('AFO', width=1280, height=720)
 opt = vis.get_render_option()
 # Streaming loop
@@ -439,12 +439,12 @@ try:
             continue
 
         # Create Images
-        depth_image = o3d.Image(np.array(aligned_depth_frame.get_data()))
+        depth_image = o3d.geometry.Image(np.array(aligned_depth_frame.get_data()))
         color_temp = np.asarray(color_frame.get_data())
-        color_image = o3d.Image(color_temp)
+        color_image = o3d.geometry.Image(color_temp)
 
         # Create RGBD Image
-        rgbd_image = o3d.create_rgbd_image_from_color_and_depth(color_image, depth_image, depth_scale=1.0 / depth_scale,
+        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(color_image, depth_image, depth_scale=1.0 / depth_scale,
                                                                 depth_trunc=clipping_distance_in_meters,
                                                                 convert_rgb_to_intensity=False)
 
@@ -464,7 +464,7 @@ try:
                 # source = copy.deepcopy(base)
                 continue
 
-            base = o3d.voxel_down_sample(base, voxel_radius)
+            base = o3d.geometry.PointCloud.voxel_down_sample(base, voxel_radius)
 
         else:
             base = preprocess_point_cloud(get_cloud(rgbd_image, intrinsic))
@@ -485,14 +485,14 @@ try:
 
         if keyboard.is_pressed('q'):
             # Initialize visualizer Class Configq
-            vis2 = o3d.VisualizerWithKeyCallback()
+            vis2 = o3d.visualization.VisualizerWithKeyCallback()
             vis2.create_window('AFO', width=1280, height=720)
             opt = vis2.get_render_option()
-            opt.background_color = np.array([0, 0, 0])
+            opt.background_color = np.array([255, 255, 255])
 
             vis2.add_geometry(base)
             vis2.run()
-            vis2.destroy_window()
+            #vis2.destroy_window()
             break
 
 finally:
