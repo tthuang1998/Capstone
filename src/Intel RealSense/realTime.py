@@ -1,3 +1,10 @@
+'''
+Authors: Alex Buck, Thomas Huang, Arjun Sree Manoj
+Date: 11/13/20
+
+realTime: Run our pipeline with real-time processing using the Intel RealSense
+'''
+
 from datetime import datetime
 import pyrealsense2 as rs
 import numpy as np
@@ -10,20 +17,37 @@ import modern_robotics as mr
 # import pcl
 
 
-# Get Cloud from rgbd image
+'''
+Function: Create pointcloud from RGBD image and camera intrinsics
+
+Params: image -> RGBD image
+intrinsics -> camera intrinsics
+
+Output: pointcloud constructed from RGBD image
+'''
 def get_cloud(image, intrinsics):
     pc = o3d.create_point_cloud_from_rgbd_image(image, intrinsics)
     pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     return pc
 
-# Setup cloud for registration
+'''
+Function: Set up pointcloud for registration by estimating normals and computing key features
+
+Params: pointcloud -> pointcloud constructed from RGBD image
+Output: pointcloud with normals, pointcloud with features
+'''
 def setup_cloud(pointcloud):
     pc_temp = copy.deepcopy(pointcloud)
     o3d.estimate_normals(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     pc_fph = o3d.compute_fpfh_feature(pc_temp, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
     return pc_temp, pc_fph
 
+'''
+Function: get normals from a pointcloud
 
+Params: pointcloud -> pointcloud with normals
+Output: rotation direction for pointcloud computed from normals
+'''
 def get_normals(pointcloud):
     mean_normal_x = 0
     mean_normal_y = 0
@@ -45,7 +69,14 @@ def get_normals(pointcloud):
 
     return rotation_dir
 
+'''
+Function: register pointclouds together
 
+Params: source -> source pointcloud
+target -> target pointcloud
+
+Output: transformation pointcloud, information matrix from registration
+'''
 def registration(source, target):
 
     # Get pointcloud and features for global registration
@@ -152,13 +183,17 @@ def cal_normal_angle(norm1, norm2):
                      np.sqrt(norm2[0]*norm2[0] + norm2[1]*norm2[1] + norm2[2]*norm2[2]))
     return angle
 
+'''
+Function: write pointcloud to file in .ply format
 
+Params: pc -> pointcloud being saved
+count -> frame
+'''
 def capture_ply(pc, count):
     print("Capturing Point Cloud")
     o3d.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
                           compressed=False)
     return
-
 
 def get_intrinsic_matrix(frame):
     intrinsics = frame.profile.as_video_stream_profile().intrinsics
