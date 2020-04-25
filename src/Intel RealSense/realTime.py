@@ -195,6 +195,14 @@ def capture_ply(pc, count):
                           compressed=False)
     return
 
+'''
+Function: get intrinsic parameters of the device converted to open3D format
+
+Param: 
+frame -> frame from video streaming device
+
+Output: open3D intrinsics in a matrix format used to position data in frame correctly
+'''
 def get_intrinsic_matrix(frame):
     intrinsics = frame.profile.as_video_stream_profile().intrinsics
     out = o3d.camera.PinholeCameraIntrinsic(640, 480, intrinsics.fx,
@@ -203,8 +211,14 @@ def get_intrinsic_matrix(frame):
 
     return out
 
+'''
+Function: Downsample pointcloud and remove outliers
 
-# Remove bad points
+Param: 
+pointcloud -> self-explanatory
+
+Output: processed pointcloud
+'''
 def preprocess_point_cloud(pointcloud):
     pc_down = o3d.voxel_down_sample(pointcloud, voxel_size=0.004)
     o3d.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30))
@@ -212,7 +226,15 @@ def preprocess_point_cloud(pointcloud):
 
     return pc_down
 
+'''
+Function: register two subsequent pointclouds
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+
+Output: transformation matrix and information matrix on how to transform target to fit source
+'''
 def pairwise_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
@@ -234,7 +256,15 @@ def pairwise_registration(source, target):
         transformation_icp)
     return transformation_icp, information_icp
 
+'''
+Function: register two pointclouds that may not be in close proximity
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+
+Output: transformation matrix and information matrix on how to transform target to fit source
+'''
 def global_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
@@ -261,7 +291,19 @@ def global_registration(source, target):
 
     return transformation_icp, information_icp
 
+'''
+Function: conduct both pairwise and global registration for all pointclouds
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+source_id -> tag for source pointcloud
+target_id -> tag for target pointcloud
+base_id -> tag for base pointcloud
+base -> base pointcloud - holds all registered, accepted pointclouds
+
+Output: final pose graph and boolean whether it could perform registration with the received pointclouds
+'''
 def full_registration(source, target, source_id, target_id, base_id, base,  max_correspondence_distance_coarse,
                       max_correspondence_distance_fine):
 
@@ -297,7 +339,17 @@ def full_registration(source, target, source_id, target_id, base_id, base,  max_
     # pose_graph.edges.append(o3d.PoseGraphEdge(base_id, target_id, transformation_global, information_global, uncertain=True))
 
     return pose_graph, success
+'''
+(NOT WORKING)
 
+Function: check for transformation error between registration processes
+
+Param: 
+transformation_prev -> previously stored transformation matrix from previous successful registration
+transformation_new -> transformation matrix retrieved from current registration process
+
+Output: return boolean of whether transformation is too far off from the previous one
+'''
 def error_checking(transformation_prev, transformation_new):
     tf = transformation_new
     R = tf[:3, :3]  # rotation matrix
@@ -343,7 +395,17 @@ def error_checking(transformation_prev, transformation_new):
         # print("here in 4 ")
         return transformation_new, True
 
+'''
+(NOT WORKING)
 
+Function: calculate angle between rotation and normal computed
+
+Param: 
+pl_norm -> normal of the plane in which the pointcloud resides
+R_dir -> rotation matrix direction
+
+Output: angle in radians
+'''
 def cal_angle(pl_norm, R_dir):
     angle_in_radians = \
         np.arccos(
@@ -352,7 +414,15 @@ def cal_angle(pl_norm, R_dir):
 
     return angle_in_radians
 
+'''
+Function: optimze pose graph using Open3D optimization functions for pose graphs
 
+Param: 
+pose_graph -> pose graph created from all pointclouds
+max_correspondence_distance_fine -> maximum distance allowed between each frame registered, tigthen registration
+
+Output: None
+'''
 def optimize_Pose(pose_graph, max_correspondence_distance_fine):
     option = o3d.registration.GlobalOptimizationOption(
         max_correspondence_distance=max_correspondence_distance_fine,
@@ -362,7 +432,14 @@ def optimize_Pose(pose_graph, max_correspondence_distance_fine):
         pose_graph, o3d.registration.GlobalOptimizationLevenbergMarquardt(),
         o3d.registration.GlobalOptimizationConvergenceCriteria(), option)
 
+'''
+Function: add key control functionality to open3D viewer
 
+Param: 
+pcd -> pointcloud generated
+
+Output: Return visualizer if true, else None
+'''
 def custom_draw_geometry_with_key_callback(pcd):
 
     def show(vis):

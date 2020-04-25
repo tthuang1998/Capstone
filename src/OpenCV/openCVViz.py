@@ -1,3 +1,10 @@
+'''
+Authors: Alex Buck, Thomas Huang, Arjun Sree Manoj
+Date: 10/27/2019
+
+openCVViz: Run our pipeline with openCV library and perform registration
+'''
+
 import pyrealsense2 as rs2
 import numpy as np
 import cv2
@@ -11,6 +18,14 @@ import realsense_device_manager as dev
 # check opencv python package
 with_opencv = initialize_opencv()
 
+'''
+Function: get intrinsic parameters of the device converted to open3D format
+
+Param: 
+frame -> frame from video streaming device
+
+Output: open3D intrinsics in a matrix format used to position data in frame correctly
+'''
 def get_intrinsic_matrix(frame):
     intrinsics = frame.profile.as_video_stream_profile().intrinsics
     out = o3d.camera.PinholeCameraIntrinsic(640, 480, intrinsics.fx,
@@ -19,6 +34,16 @@ def get_intrinsic_matrix(frame):
 
     return out
 
+'''
+Function: Convert all depth and color images into pointclouds
+
+Param: 
+color_files -> rgb array from all frames collected
+depth_files -> depth array from all frames collected
+intrinsics -> intrinsic parameters of the device
+
+Output: Array of pointclouds for all frames collected, len of the rgb array
+'''
 def process_rgbd_image(color_files, depth_files, intrinsic):
     pc_array = []
     flip_transform = [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
@@ -34,6 +59,15 @@ def process_rgbd_image(color_files, depth_files, intrinsic):
         pc_array.append(pc_down)
     return pc_array, len(color_files)
 
+'''
+Function: Make fragments by combining sets of pointclouds together
+
+Param: 
+pc_array -> pointcloud array retrived from all frames collected
+fragment_size -> number of pointclouds we are going to register to make a fragment
+
+Output: Array of pointcloud fragments
+'''
 def make_fragment(pc_array, fragment_size):
     fragment = o3d.PointCloud()
     fragment_array = []
@@ -49,7 +83,15 @@ def make_fragment(pc_array, fragment_size):
 
     return fragment_array, len(fragment_array)
 
+'''
+Function: Use all pointclouds to develop a pose graph for the object
 
+Param: 
+pc_array -> pointcloud array retrived from all frames collected
+number_of_pc -> length of pointcloud array
+
+Output: pose_graph of all pointclouds collected
+'''
 def process_pointclouds(pc_array, number_of_pc):
 
     voxel_size = 0.004
@@ -62,6 +104,7 @@ def process_pointclouds(pc_array, number_of_pc):
     pose_graph = o3d.PoseGraph()
     pose_graph.nodes.append(o3d.registration.PoseGraphNode(odometry))
 
+    #Perform registration
     for source_id in np.arange(number_of_pc):
         for target_id in np.arange(source_id + 1, number_of_pc):
 
@@ -90,6 +133,7 @@ def process_pointclouds(pc_array, number_of_pc):
                     o3d.registration.PoseGraphEdge(source_id, target_id, result_icp.transformation, information_icp,
                                                    uncertain=False))
 
+            #register every nth pointcloud to the previous pointcloud fragment
             elif (source_id % 10 == 0) and (target_id % 10 == 0):
                 print("reg edge of " + str(source_id) + " to " + str(target_id))
 
@@ -106,6 +150,7 @@ def process_pointclouds(pc_array, number_of_pc):
                                                    uncertain=True))
                 last_trans = result_icp.transformation
 
+    #Optimize pose graph - retrived from Open3D library
     option = o3d.registration.GlobalOptimizationOption(max_correspondence_distance=1.5,
                                                        edge_prune_threshold=0.25, reference_node=0,
                                                        preference_loop_closure=1)
@@ -115,7 +160,16 @@ def process_pointclouds(pc_array, number_of_pc):
                                          option)
     return pose_graph
 
+'''
+Function: Show the final stitched pointcloud
 
+Param: 
+pose_graph -> pose graph created from the pointclouds retrieved
+fragment_array -> contains array of the pointcloud fragments registered together
+number_of_fragment -> length of the fragment array
+
+Output: draws pointcloud onto Open3D viewer
+'''
 def show_cloud(pose_graph, fragment_array, number_of_fragment):
 
     vis = o3d.VisualizerWithKeyCallback()
@@ -136,13 +190,8 @@ def show_cloud(pose_graph, fragment_array, number_of_fragment):
     pcd_combined = o3d.geometry.select_down_sample(pcd_combined, ind)
     o3d.visualization.draw_geometries([pcd_combined])
 
-'''
-ctx = rs2.context()
-config = rs2.config()
 
-devManager = dev.DeviceManager(ctx, config)
-'''
-
+#Initate IntelRealsense
 pipeline = rs2.pipeline()
 
 config = rs2.config()

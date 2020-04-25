@@ -8,21 +8,35 @@ import modern_robotics as mr
 # import pcl
 
 
-# Get Cloud from rgbd image
+'''
+Function: Obtain pointcloud from RGBD image
 
+Param: 
+image -> RGBD image obtained from sensor
+intrinsics -> intrinsic parameters of the device
 
+Output: Pointcloud generated
+'''
 def get_cloud(image, intrinsics):
     pc = o3d.geometry.PointCloud.create_from_rgbd_image(image, intrinsics)
     pc.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     return pc
 
 
-# Setup cloud for registration
+'''
+Function: Get normals and features from each pointcloud
+
+Param: 
+pointcloud -> pointcloud from RGBD images
+
+Output: updated pointcloud with pointcloud features
+'''
 def setup_cloud(pointcloud):
     #qo3d.estimate_normals(pointcloud, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     pc_fph = o3d.registration.Feature.compute_fpfh_feature(pointcloud, o3d.geometry.KDTreeSearchParamHybrid(radius=0.1 * 5.0, max_nn=30))
     return pointcloud, pc_fph
 
+#Class created to store more memory heavy arrays (e.g. pointcloud with normals, features, rgbd)
 class VectorArrayInterface(object):
     def __init__(self, x, y, z):
         self.x, self.y, self.z = x, y, z
@@ -33,14 +47,29 @@ class VectorArrayInterface(object):
         else:
             return np.array([self.x, self.y, self.z])
 
+'''
+Function: Generate .ply files from pointcloud objects
 
+Param: 
+pc -> pointcloud
+count -> frame count
+
+Output: .ply file written to a certain path
+'''
 def capture_ply(pc, count):
     print("Capturing Point Cloud")
     o3d.geometry.PointCloud.write_point_cloud("C:/Users/rjsre/Desktop/Data Generated/data{}.ply".format(count), pc, write_ascii=True,
                           compressed=False)
     return
 
+'''
+Function: get intrinsic parameters of the device converted to open3D format
 
+Param: 
+frame -> frame from video streaming device
+
+Output: open3D intrinsics in a matrix format used to position data in frame correctly
+'''
 def get_intrinsic_matrix(frame):
     intrinsics = frame.profile.as_video_stream_profile().intrinsics
     out = o3d.camera.PinholeCameraIntrinsic(640, 480, intrinsics.fx,
@@ -50,14 +79,29 @@ def get_intrinsic_matrix(frame):
     return out
 
 
-# Remove bad points
+'''
+Function: Downsample pointcloud and remove outliers
+
+Param: 
+pointcloud -> self-explanatory
+
+Output: processed pointcloud
+'''
 def preprocess_point_cloud(pointcloud):
     pc_down = o3d.geometry.PointCloud.voxel_down_sample(pointcloud, voxel_size=0.01)
     o3d.geometry.PointCloud.estimate_normals(pc_down, o3d.geometry.KDTreeSearchParamHybrid(radius=0.02, max_nn=50))
     o3d.geometry.PointCloud.orient_normals_towards_camera_location(pc_down)
     return pc_down
 
+'''
+Function: register two subsequent pointclouds
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+
+Output: transformation matrix and information matrix on how to transform target to fit source
+'''
 def pairwise_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
@@ -89,7 +133,15 @@ def pairwise_registration(source, target):
 
     return transformation_icp, information_icp
 
+'''
+Function: register two pointclouds that may not be in close proximity
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+
+Output: transformation matrix and information matrix on how to transform target to fit source
+'''
 def global_registration(source, target):
     target_temp, target_f = setup_cloud(target)
     source_temp, source_f = setup_cloud(source)
@@ -112,7 +164,18 @@ def global_registration(source, target):
 
     return transformation_icp, information_icp
 
+'''
+Function: create poseNode and poseEdges to it to add to pose graph
 
+Param: 
+transformation -> transformation matrix from registration
+information -> information matrix from registration
+world_transformation -> previous transformation from previous iterations of registration
+tid -> id tag for target frames in pose graph
+pose_graph -> pose grpah for all pointclouds collected
+
+Output: final pose graph and the final transformation matrix
+'''
 def add_pose_node(transformation, information, world_transformation, tid, pose_graph):
 
     for y in range(tid):
@@ -128,7 +191,19 @@ def add_pose_node(transformation, information, world_transformation, tid, pose_g
 
     return pose_graph, world_transformation
 
+'''
+Function: conduct both pairwise and global registration for all pointclouds
 
+Param: 
+source -> source Pointcloud, initial transformation established from here
+target -> target Pointcloud, trying to transform to fit to source Pointcloud
+source_id -> tag for source pointcloud
+target_id -> tag for target pointcloud
+base_id -> tag for base pointcloud
+base -> base pointcloud - holds all registered, accepted pointclouds
+
+Output: final pose graph and boolean whether it could perform registration with the received pointclouds
+'''
 def full_registration(source, target, source_id, target_id, base_id, base,  max_correspondence_distance_coarse,
                       max_correspondence_distance_fine):
 
@@ -164,6 +239,17 @@ def full_registration(source, target, source_id, target_id, base_id, base,  max_
 
     return pose_graph, success
 
+'''
+(NOT WORKING)
+
+Function: check for transformation error between registration processes
+
+Param: 
+transformation_prev -> previously stored transformation matrix from previous successful registration
+transformation_new -> transformation matrix retrieved from current registration process
+
+Output: return boolean of whether transformation is too far off from the previous one
+'''
 def error_checking(transformation_prev, transformation_new):
     tf = transformation_new
     R = tf[:3, :3]  # rotation matrix
@@ -209,7 +295,17 @@ def error_checking(transformation_prev, transformation_new):
         # print("here in 4 ")q
         return True
 
+'''
+(NOT WORKING)
 
+Function: calculate angle between rotation and normal computed
+
+Param: 
+pl_norm -> normal of the plane in which the pointcloud resides
+R_dir -> rotation matrix direction
+
+Output: angle in radians
+'''
 def cal_angle(pl_norm, R_dir):
     angle_in_radians = \
         np.arccos(
@@ -218,7 +314,15 @@ def cal_angle(pl_norm, R_dir):
 
     return angle_in_radians
 
+'''
+Function: optimze pose graph using Open3D optimization functions for pose graphs
 
+Param: 
+pose_graph -> pose graph created from all pointclouds
+max_correspondence_distance_fine -> maximum distance allowed between each frame registered, tigthen registration
+
+Output: None
+'''
 def optimize_Pose(pose_graph, max_correspondence_distance_fine):
     option = o3d.registration.GlobalOptimizationOption(
         max_correspondence_distance=max_correspondence_distance_fine,
@@ -228,7 +332,17 @@ def optimize_Pose(pose_graph, max_correspondence_distance_fine):
         pose_graph, o3d.registration.GlobalOptimizationLevenbergMarquardt(),
         o3d.registration.GlobalOptimizationConvergenceCriteria(), option)
 
+'''
+(NOT WORKING)
 
+Function: compute odometry transformation from rgbd frames
+
+Param: 
+source -> source RGBD image
+target -> target RGBD image - new RGBD image to match to source RGBD image
+
+Output: transformation matrix and information matrix for registered RGBD images
+'''
 def odometry(source, target, intrinsic):
 
     #Initialize odometry parameters
@@ -382,6 +496,8 @@ try:
             vis.remove_geometry(base)
 
             '''
+            ALTERNATE REGISTRATION PROCESS
+            
             target = preprocess_point_cloud(get_cloud(rgbd_image, intrinsic))
             pcd_list.append(target)
             current_trans, information_trans = pairwise_registration(copy.deepcopy(source), copy.deepcopy(target))
@@ -402,6 +518,8 @@ try:
 
         else:
             '''
+            DEBUG source registration and pose graph update
+            
             source = preprocess_point_cloud(get_cloud(rgbd_image, intrinsic))
             pcd_list.append(source)
             pose_graph.nodes.append(o3d.PoseGraphNode(np.identity(4)))
@@ -415,6 +533,8 @@ try:
         print("FPS: " + str(1 / process_time.total_seconds()))
 
         '''
+        ADD KEYBOARD FUNCTIONALITY
+        
         if keyboard.is_pressed('q'):
             optimize_Pose(pose_graph, max_correspondence_distance_fine=0.1)
             for node in range(len(pcd_list)):
